@@ -1,0 +1,117 @@
+VERUSFARM : TOUT COMPILER AVEC GITHUB (sans Android Studio)
+===========================================================
+
+Ce projet est prévu pour un SEUL dépôt GitHub. Un seul clic lance :
+  1. la compilation du programme de minage (64 bits et 32 bits),
+  2. son intégration dans l'application,
+  3. la fabrication du fichier VerusFarm.apk,
+  4. sa publication dans « Releases », prête à installer sur tes téléphones.
+Tu n'as rien à installer sur ton ordinateur.
+
+Le fichier miner-sources.properties n'est PAS à remplir dans ce mode : le
+programme de minage passe directement d'une étape à l'autre, sans téléchargement.
+
+
+STRUCTURE DU DÉPÔT (à la racine)
+--------------------------------
+  .github/workflows/build.yml   le flux de travail (dossier caché : ne l'oublie pas)
+  miner/build-android.sh        compile le programme de minage
+  app/                          l'application Android (avec sa clé de signature)
+  build.gradle.kts, settings.gradle.kts, gradle.properties, gradle/
+  miner-sources.properties      inutile dans ce mode
+  .gitignore
+
+
+ÉTAPES
+------
+1. Crée un compte sur github.com (gratuit).
+
+2. Crée un nouveau dépôt (« New repository »). Il peut être PRIVÉ.
+
+3. Envoie dans le dépôt TOUT le contenu du dossier VerusFarm (pas le dossier
+   lui-même) : sur la page du dépôt, « uploading an existing file », glisse
+   les fichiers et dossiers, puis « Commit changes ».
+   Si GitHub limite le nombre de fichiers par envoi, fais-le en deux fois.
+   IMPORTANT : vérifie ensuite que le fichier
+   .github/workflows/build.yml est bien visible dans le dépôt.
+   Les dossiers dont le nom commence par un point sont cachés sur Mac et Linux
+   (Mac : Cmd+Maj+. pour les afficher). S'il manque, crée-le à la main :
+   « Add file > Create new file », tape le chemin .github/workflows/build.yml
+   et colles-y le contenu du fichier.
+
+4. Enregistre ton adresse VRSC dans le dépôt (une seule fois) :
+   Settings > Secrets and variables > Actions > onglet « Variables »
+   > « New repository variable »
+     Name  : VRSC_WALLET
+     Value : ton adresse de réception VRSC (elle commence par R, 34 caractères)
+   (Tu peux aussi la taper à chaque lancement dans le champ « Adresse VRSC ».)
+
+5. Onglet « Actions » du dépôt (accepte d'activer les workflows si GitHub le demande).
+   À gauche : « Compiler le minage et l'application » > « Run workflow ».
+   Laisse « main » dans « Code de ccminer » (ou mets un numéro de commit
+   pour figer la version), puis « Run workflow ».
+
+6. Attends 20 à 40 minutes. Trois tâches : minage 64 bits, minage 32 bits (en
+   parallèle), puis application.
+
+7. Quand c'est vert : colonne de droite du dépôt, « Releases » > « VerusFarm apk-1 »
+   > télécharge VerusFarm.apk. (L'APK est aussi disponible dans l'exécution,
+   section « Artifacts », mais dans un fichier zip.)
+
+8. Envoie VerusFarm.apk sur chaque téléphone et installe-le.
+   - Autorise « Installer des applications inconnues ».
+   - Si Google Play Protect avertit (fréquent avec le minage) : « Installer quand même ».
+   - Ouvre VerusFarm : le minage démarre. Accepte la notification.
+
+9. Sur chaque téléphone, dans l'écran « Pour que le minage ne s'arrête jamais » :
+   Notifications > Autoriser ; Batterie sans restriction > Autoriser ;
+   Protection contre la désinstallation > Activer ; Démarrage automatique >
+   ouvre les réglages et active-le (Tecno, Infinix, Xiaomi, Samsung...).
+   Verrouille l'application dans la liste des applications récentes.
+   Garde les téléphones branchés, hors coque, bien ventilés.
+
+
+NOUVELLE VERSION
+----------------
+Modifie ce que tu veux dans le dépôt, puis relance « Run workflow ». Une nouvelle
+version « apk-2 », « apk-3 »... apparaît. Elle s'installe PAR-DESSUS l'ancienne
+sans désinstaller (même clé de signature), même avec l'administrateur activé.
+
+
+SI QUELQUE CHOSE ÉCHOUE
+-----------------------
+- Tâche « Programme de minage (arm64-v8a) » en rouge : c'est la plus importante.
+  Le code de ccminer vise des processeurs 64 bits avec instructions crypto, mais
+  sa compilation pour Android peut demander des ajustements. Dans la page de
+  l'exécution, télécharge l'archive « logs-arm64-v8a », ouvre le fichier .log
+  de la variante en échec et copie les 40 dernières lignes pour demander de l'aide.
+- Variante « compat » ou version 32 bits en échec : non bloquant. L'application
+  est fabriquée avec ce qui a été compilé. Sans version 32 bits, les téléphones
+  qui ne gèrent que le 32 bits refuseront l'installation (message d'incompatibilité).
+- Tâche « Application Android » en rouge : copie le message d'erreur de l'étape
+  « Fabriquer l'application ».
+- Le programme de minage n'a pas été testé sur un téléphone : installe d'abord
+  l'APK sur UN seul appareil et ouvre « Journal du mineur » dans l'application.
+
+
+CE QUE TU PEUX AJUSTER (facultatif)
+-----------------------------------
+- app/src/main/java/com/monchamp/verusfarm/Config.kt : serveurs Luckpool et port
+  (vérifie-les sur luckpool.net).
+- Le nom de chaque téléphone se choisit dans l'application (bouton
+  « Modifier l'adresse et le nom »).
+
+À SAVOIR
+--------
+- Le mot de passe de la clé de signature est dans le projet (app/build.gradle.kts) :
+  garde le dépôt PRIVÉ si tu ne veux pas que d'autres puissent signer des versions
+  qui remplacent la tienne.
+- ccminer est sous licence GPL-3.0 : si tu distribues l'APK à d'autres personnes,
+  tu dois fournir aussi le code source (le lien est dans les notes de la Release).
+
+
+MODE ANDROID STUDIO (facultatif)
+--------------------------------
+Tu peux aussi ouvrir le projet dans Android Studio. Dans ce cas, place toi-même
+libccminer.so dans app/src/main/jniLibs/arm64-v8a/ (et armeabi-v7a/), ou remplis
+miner-sources.properties : la tâche fetchMiner les télécharge alors à la compilation.
