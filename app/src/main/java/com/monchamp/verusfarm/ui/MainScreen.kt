@@ -151,11 +151,12 @@ fun MainScreen(
 
         if (!ui.engineOk) {
             Panel(border = Corail) {
-                Text("Programme de minage manquant", fontWeight = FontWeight.Bold, color = Corail)
+                Text("Minage impossible sur cet appareil", fontWeight = FontWeight.Bold, color = Corail)
+                Text(ui.status, style = MaterialTheme.typography.bodyMedium)
                 Text(
-                    "Cette version de VerusFarm ne contient pas de programme de minage pour ce processeur ($abi). " +
-                        "Ajoute libccminer.so dans le dossier jniLibs de ce processeur, puis recompile l'application.",
-                    style = MaterialTheme.typography.bodyMedium
+                    "Processeur : $abi, $cores cœurs.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }
