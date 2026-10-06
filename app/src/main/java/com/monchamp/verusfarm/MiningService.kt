@@ -57,6 +57,7 @@ class MiningService : Service() {
     private var engineIdx = 0
     private var poolIndex = 0
     private var failures = 0
+    private var illegalCount = 0
     private var retryDelayMs = 5_000L
     private var retryPending = false
     private var hashed = false
@@ -236,6 +237,7 @@ class MiningService : Service() {
             if (!hashed) {
                 hashed = true
                 failures = 0
+                illegalCount = 0
                 retryDelayMs = 5_000L
                 // On retient le programme qui fonctionne sur ce téléphone
                 if (Prefs.engineIndex(this) != engineIdx) Prefs.setEngineIndex(this, engineIdx)
@@ -268,6 +270,14 @@ class MiningService : Service() {
         // 139 et 11 = plantage mémoire
         val incompatible = code == 132 || code == 4 || code == 139 || code == 11 || code == -1
 
+        // Instruction illégale répétée : ce processeur n'a pas le chiffrement ARM, inutile d'insister
+        val illegal = code == 132 || code == 4
+        illegalCount = if (illegal) illegalCount + 1 else 0
+        if (illegal && illegalCount >= 2 * engines.size.coerceAtLeast(1)) {
+            cpuUnsupported()
+            return
+        }
+
         if (incompatible && engines.size > 1) {
             engineIdx = (engineIdx + 1) % engines.size
             Prefs.setEngineIndex(this, engineIdx)
@@ -293,6 +303,19 @@ class MiningService : Service() {
             it.copy(
                 enabled = false, engineOk = false, hashrate = "—", threads = 0, tone = Tone.ERROR,
                 status = "Programme de minage absent pour ce processeur (${DeviceIdentity.abi()})"
+            )
+        }
+    }
+
+    // Le processeur ne comprend pas les instructions nécessaires : message clair, plus de relance
+    private fun cpuUnsupported() {
+        Prefs.setEnabled(this, false)
+        shutdown(setIdle = false)
+        MiningState.set {
+            it.copy(
+                enabled = false, engineOk = false, hashrate = "—", threads = 0, tone = Tone.ERROR,
+                status = "Ce processeur ne gère pas les instructions de chiffrement ARM " +
+                    "(AES et PMULL) nécessaires au minage de Verus."
             )
         }
     }
