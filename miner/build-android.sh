@@ -5,14 +5,15 @@
 #     ANDROID_NDK_HOME=/chemin/du/ndk ABI=arm64-v8a bash miner/build-android.sh
 #
 #  Résultat dans miner/out/ :
-#     <abi>-libccminer.so         version optimisée (instructions crypto ARM)
-#     <abi>-libccminer_compat.so  version de secours (processeurs plus anciens)
+#     arm64-v8a-libccminer.so          programme de minage (téléphones 64 bits)
+#     armeabi-v7a-libplaceholder.so    bibliothèque vide : permet d'installer l'application
+#                                      sur les téléphones 32 bits (sans minage)
 # =============================================================================
 set -euo pipefail
 
 ABI="${ABI:?Indique ABI=arm64-v8a ou ABI=armeabi-v7a}"
 NDK="${ANDROID_NDK_HOME:?Indique ANDROID_NDK_HOME (dossier du NDK)}"
-VARIANTS="${VARIANTS:-optimized compat}"
+VARIANTS="${VARIANTS:-optimized}"   # « compat » est impossible : le code de Verus exige les instructions de chiffrement ARMv8
 API=26
 
 CCMINER_REPO="${CCMINER_REPO:-https://github.com/Oink70/CCminer-ARM-optimized.git}"
@@ -283,6 +284,18 @@ HDR
   cp ccminer "$OUT/$out_name"
   echo ">>> OK : $OUT/$out_name"
 }
+
+# --- 32 bits : le code de minage de Verus a besoin des instructions de chiffrement ARMv8 ---
+# (AES et multiplication sans retenue), absentes des processeurs ARMv7 : pas de minage possible.
+# On fournit une bibliothèque vide pour que l'application s'installe quand même sur ces
+# téléphones (elle y affichera un message clair au lieu d'être refusée à l'installation).
+if [ "${1:-all}" = "all" ] && [ "$ABI" = "armeabi-v7a" ]; then
+  echo 'int verusfarm_placeholder(void) { return 0; }' > "$WORK/placeholder.c"
+  "$CC" -shared -fPIC -o "$OUT/armeabi-v7a-libplaceholder.so" "$WORK/placeholder.c"
+  "$STRIP" --strip-unneeded "$OUT/armeabi-v7a-libplaceholder.so"
+  echo "Bibliothèque vide créée pour armeabi-v7a (pas de minage en 32 bits)."
+  exit 0
+fi
 
 # --- Modes appelés par la boucle plus bas (chacun dans son propre processus) ---
 case "${1:-all}" in
