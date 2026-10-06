@@ -203,18 +203,79 @@ build_variant() {
     if [ -n "$src" ]; then cp "$src" "$f"; fi
   done
 
-  local flags="$COMMON_FLAGS $arch_flags -I$PREFIX/include"
+  # En-tête de compatibilité : ce que le système Android ne fournit pas
+  cat > "$WORK/android-compat.h" <<'HDR'
+/* Compatibilité Android (bionic) pour ccminer */
+#ifndef ANDROID_COMPAT_H
+#define ANDROID_COMPAT_H
+#include <endian.h>
+#include <pthread.h>
+
+/* Android n'a pas l'annulation de threads POSIX : fonctions neutres à la place */
+#ifndef PTHREAD_CANCEL_ASYNCHRONOUS
+#define PTHREAD_CANCEL_ENABLE 0
+#define PTHREAD_CANCEL_DISABLE 1
+#define PTHREAD_CANCEL_DEFERRED 0
+#define PTHREAD_CANCEL_ASYNCHRONOUS 1
+static inline int pthread_setcancelstate(int state, int *old) { (void)state; if (old) *old = 0; return 0; }
+static inline int pthread_setcanceltype(int type, int *old) { (void)type; if (old) *old = 0; return 0; }
+static inline void pthread_testcancel(void) {}
+static inline int pthread_cancel(pthread_t t) { (void)t; return 0; }
+#endif
+
+/* Les processeurs ARM d'Android sont little-endian */
+#ifndef htole16
+#define htole16(x) (x)
+#endif
+#ifndef htole32
+#define htole32(x) (x)
+#endif
+#ifndef htole64
+#define htole64(x) (x)
+#endif
+#ifndef le16toh
+#define le16toh(x) (x)
+#endif
+#ifndef le32toh
+#define le32toh(x) (x)
+#endif
+#ifndef le64toh
+#define le64toh(x) (x)
+#endif
+#ifndef htobe16
+#define htobe16(x) __builtin_bswap16(x)
+#endif
+#ifndef htobe32
+#define htobe32(x) __builtin_bswap32(x)
+#endif
+#ifndef htobe64
+#define htobe64(x) __builtin_bswap64(x)
+#endif
+#ifndef be16toh
+#define be16toh(x) __builtin_bswap16(x)
+#endif
+#ifndef be32toh
+#define be32toh(x) __builtin_bswap32(x)
+#endif
+#ifndef be64toh
+#define be64toh(x) __builtin_bswap64(x)
+#endif
+#endif
+HDR
+
+  local flags="$COMMON_FLAGS $arch_flags -w -I$PREFIX/include -include $WORK/android-compat.h"
+  local asflags="$COMMON_FLAGS $arch_flags"
   # shellcheck disable=SC2086
   ./configure --host="$HOST" --with-libcurl="$PREFIX" \
     CC="$CC" CXX="$CXX" \
     CPPFLAGS="-I$PREFIX/include" \
-    CFLAGS="$flags" CXXFLAGS="$flags" \
+    CFLAGS="$flags" CXXFLAGS="$flags" CCASFLAGS="$asflags" \
     LDFLAGS="-L$PREFIX/lib -static-libstdc++ $OMP_LDFLAGS" \
     LIBS="-lssl -lcrypto -ldl -lm" \
     PKG_CONFIG_LIBDIR="$PREFIX/lib/pkgconfig" \
     $OMP_CONF
 
-  make -j"$JOBS"
+  make -k -j"$JOBS"
   test -f ccminer
 
   "$STRIP" --strip-unneeded ccminer
@@ -233,9 +294,13 @@ esac
 summarize_failure() {  # summarize_failure <titre> <journal> [config.log]
   {
     echo "### Échec : $1"
+    echo "Toutes les erreurs trouvées :"
+    echo '```'
+    grep -aE ' error: |fatal error|undefined reference|\*\*\* \[|configure: error' "$2" | sort -u | head -n 60 || true
+    echo '```'
     echo "Dernières lignes du journal :"
     echo '```'
-    tail -n 40 "$2" || true
+    tail -n 25 "$2" || true
     echo '```'
     if [ -n "${3:-}" ] && [ -f "$3" ]; then
       echo "Fin de config.log :"
