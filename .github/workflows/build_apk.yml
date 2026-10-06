@@ -42,12 +42,26 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y autoconf automake libtool pkg-config make git
 
+      - name: Récupérer les bibliothèques déjà compilées (cache)
+        id: depscache
+        uses: actions/cache/restore@v4
+        with:
+          path: miner/work/${{ matrix.abi }}/prefix
+          key: deps-v1-${{ matrix.abi }}-openssl3.0.15-curl8.9.1-jansson2.14
+
       - name: Compiler
         env:
           ABI: ${{ matrix.abi }}
           ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
           CCMINER_REF: ${{ inputs.ccminer_ref }}
         run: bash miner/build-android.sh
+
+      - name: Sauvegarder les bibliothèques compilées (cache)
+        if: ${{ always() && steps.depscache.outputs.cache-hit != 'true' && hashFiles('miner/work/**/deps-done.txt') != '' }}
+        uses: actions/cache/save@v4
+        with:
+          path: miner/work/${{ matrix.abi }}/prefix
+          key: deps-v1-${{ matrix.abi }}-openssl3.0.15-curl8.9.1-jansson2.14
 
       - name: Garder les programmes compilés
         if: always()
