@@ -26,6 +26,7 @@ WORK="$ROOT/miner/work/$ABI"
 OUT="$ROOT/miner/out"
 LOGS="$ROOT/miner/logs"
 PREFIX="$WORK/prefix"
+DEPS_MARKER="$PREFIX/deps-done.txt"
 JOBS="$(nproc)"
 mkdir -p "$WORK/src" "$PREFIX/lib" "$PREFIX/include/sys" "$OUT" "$LOGS"
 
@@ -37,6 +38,7 @@ case "$ABI" in
     HOST="aarch64-linux-android"
     CLANG_TARGET="aarch64-linux-android"
     OSSL_TARGET="android-arm64"
+    OMP_DIR="aarch64"
     ARCH_OPT="-march=armv8-a+crypto -mtune=cortex-a53"
     ARCH_COMPAT="-march=armv8-a"
     ;;
@@ -44,6 +46,7 @@ case "$ABI" in
     HOST="arm-linux-androideabi"
     CLANG_TARGET="armv7a-linux-androideabi"
     OSSL_TARGET="android-arm"
+    OMP_DIR="arm"
     ARCH_OPT="-march=armv8-a+crypto -mfpu=crypto-neon-fp-armv8 -mfloat-abi=softfp"
     ARCH_COMPAT="-march=armv7-a -mfpu=neon -mfloat-abi=softfp"
     ;;
@@ -62,6 +65,16 @@ READELF="$TOOLCHAIN/bin/llvm-readelf"
 
 COMMON_FLAGS="-O3 -ffast-math -funroll-loops -finline-functions -fomit-frame-pointer -fno-stack-protector -D_REENTRANT -fpic -pthread"
 
+# OpenMP : s'il est disponible on l'intègre au programme (sinon il dépendrait
+# de libomp.so, absent des téléphones). Sinon on le désactive.
+if [ -n "$(find "$TOOLCHAIN/lib" -path "*/linux/$OMP_DIR/libomp.a" 2>/dev/null | head -n 1)" ]; then
+  OMP_LDFLAGS="-static-openmp"
+  OMP_CONF=""
+else
+  OMP_LDFLAGS=""
+  OMP_CONF="ac_cv_prog_c_openmp=unsupported ac_cv_prog_cxx_openmp=unsupported"
+fi
+
 fetch() {  # fetch <fichier-de-sortie> <url> [url de secours...]
   local out="$1"; shift
   local url
@@ -70,54 +83,6 @@ fetch() {  # fetch <fichier-de-sortie> <url> [url de secours...]
     echo "Échec du téléchargement : $url" >&2
   done
   return 1
-}
-
-# --- Mode « une variante » : appelé par la boucle plus bas ---------------------
-build_variant() {
-  local variant="$1" arch_flags out_name
-  case "$variant" in
-    optimized) arch_flags="$ARCH_OPT";    out_name="$ABI-libccminer.so" ;;
-    compat)    arch_flags="$ARCH_COMPAT"; out_name="$ABI-libccminer_compat.so" ;;
-    *) echo "Variante inconnue : $variant" >&2; exit 1 ;;
-  esac
-
-  local dir="$WORK/build-$variant"
-  rm -rf "$dir"
-  cp -r "$WORK/ccminer-src" "$dir"
-  cd "$dir"
-
-  # Le dépôt contient des fichiers déjà générés (dont un ancien programme) : on les enlève
-  rm -rf ccminer autom4te.cache config.status config.log Makefile Makefile.in \
-         configure aclocal.m4 ccminer-config.h stamp-h1
-  find . -name '*.o' -delete
-  find . -name '.deps' -type d -prune -exec rm -rf {} +
-
-  chmod +x autogen.sh
-  ./autogen.sh
-
-  # Fichiers config.sub / config.guess récents (reconnaissent Android)
-  local f src
-  for f in config.sub config.guess; do
-    src="$(ls /usr/share/automake-*/"$f" 2>/dev/null | tail -n1 || true)"
-    if [ -n "$src" ]; then cp "$src" "$f"; fi
-  done
-
-  local flags="$COMMON_FLAGS $arch_flags -I$PREFIX/include"
-  ./configure --host="$HOST" --with-libcurl="$PREFIX" \
-    CC="$CC" CXX="$CXX" \
-    CPPFLAGS="-I$PREFIX/include" \
-    CFLAGS="$flags" CXXFLAGS="$flags" \
-    LDFLAGS="-L$PREFIX/lib -static-libstdc++" \
-    LIBS="-lssl -lcrypto -ldl -lm" \
-    PKG_CONFIG_LIBDIR="$PREFIX/lib/pkgconfig"
-
-  make -j"$JOBS"
-  test -f ccminer
-
-  "$STRIP" --strip-unneeded ccminer
-  validate ccminer
-  cp ccminer "$OUT/$out_name"
-  echo ">>> OK : $OUT/$out_name"
 }
 
 # Contrôles : le programme ne doit dépendre que de bibliothèques présentes sur tout Android
@@ -137,11 +102,6 @@ validate() {
   fi
   "$READELF" -h "$f" | grep -E 'Class|Machine'
 }
-
-if [ "${1:-all}" = "variant" ]; then
-  build_variant "${2:?variante manquante}"
-  exit 0
-fi
 
 # --- Bibliothèques nécessaires (compilées une seule fois par processeur) -------
 build_deps() {
@@ -196,11 +156,106 @@ build_deps() {
     make install
   )
 
-  touch "$PREFIX/.deps-done"
+  # Le code de ccminer a besoin de la macro LIBCURL_CHECK_CONFIG (fichier libcurl.m4)
+  if [ ! -f "$PREFIX/share/aclocal/libcurl.m4" ]; then
+    mkdir -p "$PREFIX/share/aclocal"
+    if [ -f "$WORK/src/curl-src/docs/libcurl/libcurl.m4" ]; then
+      cp "$WORK/src/curl-src/docs/libcurl/libcurl.m4" "$PREFIX/share/aclocal/libcurl.m4"
+    else
+      fetch "$PREFIX/share/aclocal/libcurl.m4" \
+        "https://raw.githubusercontent.com/curl/curl/curl-${CURL_VERSION//./_}/docs/libcurl/libcurl.m4"
+    fi
+  fi
+
+  touch "$DEPS_MARKER"
 }
 
-if [ ! -f "$PREFIX/.deps-done" ]; then
-  build_deps 2>&1 | tee "$LOGS/$ABI-deps.log"
+# --- Une variante de ccminer ----------------------------------------------------
+build_variant() {
+  local variant="$1" arch_flags out_name
+  case "$variant" in
+    optimized) arch_flags="$ARCH_OPT";    out_name="$ABI-libccminer.so" ;;
+    compat)    arch_flags="$ARCH_COMPAT"; out_name="$ABI-libccminer_compat.so" ;;
+    *) echo "Variante inconnue : $variant" >&2; exit 1 ;;
+  esac
+
+  local dir="$WORK/build-$variant"
+  rm -rf "$dir"
+  cp -r "$WORK/ccminer-src" "$dir"
+  cd "$dir"
+
+  # Le dépôt contient des fichiers déjà générés (dont un ancien programme) : on les enlève
+  rm -rf ccminer autom4te.cache config.status config.log Makefile Makefile.in \
+         configure aclocal.m4 ccminer-config.h stamp-h1
+  find . -name '*.o' -delete
+  find . -name '.deps' -type d -prune -exec rm -rf {} +
+
+  # Macro LIBCURL_CHECK_CONFIG : fournie à aclocal par acinclude.m4
+  cp "$PREFIX/share/aclocal/libcurl.m4" acinclude.m4
+
+  chmod +x autogen.sh
+  ./autogen.sh
+
+  # Fichiers config.sub / config.guess récents (reconnaissent Android)
+  local f src
+  for f in config.sub config.guess; do
+    src="$(ls /usr/share/automake-*/"$f" 2>/dev/null | tail -n1 || true)"
+    if [ -n "$src" ]; then cp "$src" "$f"; fi
+  done
+
+  local flags="$COMMON_FLAGS $arch_flags -I$PREFIX/include"
+  # shellcheck disable=SC2086
+  ./configure --host="$HOST" --with-libcurl="$PREFIX" \
+    CC="$CC" CXX="$CXX" \
+    CPPFLAGS="-I$PREFIX/include" \
+    CFLAGS="$flags" CXXFLAGS="$flags" \
+    LDFLAGS="-L$PREFIX/lib -static-libstdc++ $OMP_LDFLAGS" \
+    LIBS="-lssl -lcrypto -ldl -lm" \
+    PKG_CONFIG_LIBDIR="$PREFIX/lib/pkgconfig" \
+    $OMP_CONF
+
+  make -j"$JOBS"
+  test -f ccminer
+
+  "$STRIP" --strip-unneeded ccminer
+  validate ccminer
+  cp ccminer "$OUT/$out_name"
+  echo ">>> OK : $OUT/$out_name"
+}
+
+# --- Modes appelés par la boucle plus bas (chacun dans son propre processus) ---
+case "${1:-all}" in
+  deps)    build_deps; exit 0 ;;
+  variant) build_variant "${2:?variante manquante}"; exit 0 ;;
+esac
+
+# Écrit les dernières lignes d'un journal dans le résumé de la page GitHub
+summarize_failure() {  # summarize_failure <titre> <journal> [config.log]
+  {
+    echo "### Échec : $1"
+    echo "Dernières lignes du journal :"
+    echo '```'
+    tail -n 40 "$2" || true
+    echo '```'
+    if [ -n "${3:-}" ] && [ -f "$3" ]; then
+      echo "Fin de config.log :"
+      echo '```'
+      tail -n 30 "$3" || true
+      echo '```'
+    fi
+  } | tee -a "${GITHUB_STEP_SUMMARY:-/dev/null}"
+}
+
+# --- Bibliothèques (une fois par processeur) -----------------------------------
+if [ ! -f "$DEPS_MARKER" ]; then
+  if ! bash "${BASH_SOURCE[0]}" deps 2>&1 | tee "$LOGS/$ABI-deps.log"; then
+    summarize_failure "bibliothèques pour $ABI" "$LOGS/$ABI-deps.log"
+    exit 1
+  fi
+fi
+if [ ! -f "$DEPS_MARKER" ]; then
+  echo "Les bibliothèques n'ont pas été compilées correctement." >&2
+  exit 1
 fi
 
 # --- Code source de ccminer ----------------------------------------------------
@@ -221,7 +276,8 @@ for v in $VARIANTS; do
   if bash "${BASH_SOURCE[0]}" variant "$v" 2>&1 | tee "$LOGS/$ABI-$v.log"; then
     ok=1
   else
-    echo "::warning::La variante '$v' pour $ABI n'a pas pu être compilée (voir le journal)."
+    echo "::warning::La variante '$v' pour $ABI n'a pas pu être compilée (voir le résumé et les journaux)."
+    summarize_failure "$ABI, variante $v" "$LOGS/$ABI-$v.log" "$WORK/build-$v/config.log"
   fi
 done
 
